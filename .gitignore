@@ -3,6 +3,9 @@
 *.a
 *.so
 
+*.work
+*.work.sum
+
 # Folders
 .build
 _obj
