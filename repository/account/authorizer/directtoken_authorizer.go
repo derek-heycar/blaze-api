@@ -2,10 +2,15 @@ package authorizer
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
+	"github.com/geniusrabbit/blaze-api/pkg/auth"
 	"github.com/geniusrabbit/blaze-api/pkg/auth/tokenextractor"
 	"github.com/geniusrabbit/blaze-api/pkg/context/ctxlogger"
 	"github.com/geniusrabbit/blaze-api/pkg/context/session"
@@ -33,7 +38,7 @@ func NewDirectTokenAuthorizer[TUser user.Model, TAccount account.Model](
 	tokens DirectAccessTokenGetter,
 ) *DirectTokenAuthorizer[TUser, TAccount] {
 	return &DirectTokenAuthorizer[TUser, TAccount]{
-		extractor: tokenextractor.DefaultExtractor,
+		extractor: tokenextractor.AuthorizationHeaderExtractor,
 		loader:    loader,
 		tokens:    tokens,
 	}
@@ -44,7 +49,7 @@ func (au *DirectTokenAuthorizer[TUser, TAccount]) AuthorizerCode() string {
 	return session.AuthorizerCodeDirectToken
 }
 
-// Authorize looks the bearer token up in the direct access tokens
+// Authorize looks the `Authorization: Bearer` token up in the direct access tokens
 // and loads the user and account the token belongs to.
 // A token that is not a direct access token yields an empty result without an error.
 func (au *DirectTokenAuthorizer[TUser, TAccount]) Authorize(w http.ResponseWriter, r *http.Request) (string, TUser, TAccount, error) {
@@ -63,7 +68,7 @@ func (au *DirectTokenAuthorizer[TUser, TAccount]) Authorize(w http.ResponseWrite
 
 	tokenObject, err := au.tokens.GetByToken(ctx, token)
 	if err != nil {
-		return "", zeroUser, zeroAccount, err
+		return "", zeroUser, zeroAccount, fmt.Errorf("%w: direct access token lookup: %w", auth.ErrAuthorizationUnavailable, err)
 	}
 	if tokenObject == nil || tokenObject.ID == 0 {
 		return "", zeroUser, zeroAccount, nil
@@ -76,7 +81,16 @@ func (au *DirectTokenAuthorizer[TUser, TAccount]) Authorize(w http.ResponseWrite
 
 	userObject, accountObject, err := au.loader.UserAccountByID(ctx, userID, tokenObject.AccountID, zeroUser, zeroAccount)
 	if err != nil {
-		return "", zeroUser, zeroAccount, err
+		if isRejectedCredential(err) {
+			return "", zeroUser, zeroAccount, err
+		}
+		return "", zeroUser, zeroAccount, fmt.Errorf("%w: direct access token owner: %w", auth.ErrAuthorizationUnavailable, err)
 	}
 	return token, userObject, accountObject, nil
+}
+
+func isRejectedCredential(err error) bool {
+	return errors.Is(err, accauth.ErrUserIsNotMemberOfAccount) ||
+		errors.Is(err, gorm.ErrRecordNotFound) ||
+		errors.Is(err, sql.ErrNoRows)
 }

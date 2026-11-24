@@ -2,10 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	blazeauth "github.com/geniusrabbit/blaze-api/pkg/auth"
 	"github.com/geniusrabbit/blaze-api/pkg/context/session"
 	pkgModels "github.com/geniusrabbit/blaze-api/pkg/models"
 	"github.com/geniusrabbit/blaze-api/pkg/permissions"
@@ -225,5 +228,48 @@ func TestMiddlewareRejectsCrossAccountForDirectToken(t *testing.T) {
 	}
 	if nextCalled {
 		t.Fatal("next handler was called for a cross-account API key request")
+	}
+}
+
+type failingAuthorizer struct {
+	err error
+}
+
+func (failingAuthorizer) AuthorizerCode() string { return "failing" }
+
+func (authorizer failingAuthorizer) Authorize(http.ResponseWriter, *http.Request) (string, *mwUser, *mwAccount, error) {
+	return "", nil, nil, authorizer.err
+}
+
+func TestMiddlewareStatusForAuthorizerErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		err        error
+		wantStatus int
+	}{
+		"rejected credential": {err: errors.New("user is not a member of the account"), wantStatus: http.StatusUnauthorized},
+		"service unavailable": {err: fmt.Errorf("%w: connection refused", blazeauth.ErrAuthorizationUnavailable), wantStatus: http.StatusServiceUnavailable},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			nextCalled := false
+			handler := Middleware[*mwUser, *mwAccount](
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
+				nil,
+				failingAuthorizer{err: testCase.err},
+			)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, testCase.wantStatus)
+			}
+			if nextCalled {
+				t.Fatal("next handler was called")
+			}
+		})
 	}
 }

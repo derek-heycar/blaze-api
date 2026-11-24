@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	// errAuthUserIsNotMemberOfAccount is returned when a user is not a member of the target account
-	errAuthUserIsNotMemberOfAccount = errors.New("user is not a member of the account")
+	// ErrUserIsNotMemberOfAccount is returned when a user is not a member of the target account
+	ErrUserIsNotMemberOfAccount = errors.New("user is not a member of the account")
 	// errNoCrossAuthPermission is returned when a user lacks cross-account authentication permissions
 	errNoCrossAuthPermission = errors.New("user don't have cross auth permissions")
 )
@@ -64,7 +64,7 @@ func (l *Loader[TUser, TAccount]) UserAccountByID(ctx context.Context, uID, accI
 
 	if any(account) != any(zeroAcc) {
 		if any(userObj) != any(zeroUser) && !l.Members.IsMember(ctx, userObj.GetID(), account.GetID()) {
-			return zeroUser, zeroAcc, errAuthUserIsNotMemberOfAccount
+			return zeroUser, zeroAcc, ErrUserIsNotMemberOfAccount
 		}
 
 		if any(prevAccount) != any(zeroAcc) && prevAccount.GetID() != account.GetID() &&

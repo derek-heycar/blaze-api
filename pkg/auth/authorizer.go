@@ -1,11 +1,16 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/demdxx/gocast/v2"
 	"github.com/demdxx/xtypes"
 )
+
+// ErrAuthorizationUnavailable marks an authorizer error caused by the infrastructure,
+// not by the credential. The middleware answers it with 503 instead of 401.
+var ErrAuthorizationUnavailable = errors.New("authorization is temporarily unavailable")
 
 // IsNillable describes a type that can report whether it is nil/empty.
 type IsNillable interface {

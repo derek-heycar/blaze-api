@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"gorm.io/gorm"
+
+	"github.com/geniusrabbit/blaze-api/pkg/auth"
 	"github.com/geniusrabbit/blaze-api/repository/account"
 	accauth "github.com/geniusrabbit/blaze-api/repository/account/auth"
 	accountModels "github.com/geniusrabbit/blaze-api/repository/account/models"
@@ -209,6 +213,84 @@ func TestDirectTokenAuthorizerLookupError(t *testing.T) {
 	_, _, _, err := authorizer.Authorize(httptest.NewRecorder(), newBearerRequest("api-key"))
 	if !errors.Is(err, lookupError) {
 		t.Fatalf("err = %v, want %v", err, lookupError)
+	}
+	if !errors.Is(err, auth.ErrAuthorizationUnavailable) {
+		t.Fatalf("err = %v, want %v", err, auth.ErrAuthorizationUnavailable)
+	}
+}
+
+type failingUsers struct {
+	stubUsers
+	err error
+}
+
+func (users failingUsers) Get(context.Context, uint64) (*testUser, error) { return nil, users.err }
+
+func TestDirectTokenAuthorizerClassifiesLoaderErrors(t *testing.T) {
+	t.Parallel()
+
+	tokens := stubTokens{tokens: map[string]*directaccesstoken.DirectAccessToken{
+		"api-key": {ID: 1, Token: "api-key", UserID: sql.Null[uint64]{V: 7, Valid: true}, AccountID: 9},
+	}}
+	cases := map[string]struct {
+		loader          *accauth.Loader[*testUser, *testAccount]
+		wantUnavailable bool
+	}{
+		"user is not a member": {
+			loader: accauth.NewLoader[*testUser, *testAccount](stubUsers{}, stubAccounts{}, stubMembers{member: false}),
+		},
+		"user was deleted": {
+			loader: accauth.NewLoader[*testUser, *testAccount](failingUsers{err: fmt.Errorf("load user: %w", gorm.ErrRecordNotFound)}, stubAccounts{}, stubMembers{member: true}),
+		},
+		"database is down": {
+			loader:          accauth.NewLoader[*testUser, *testAccount](failingUsers{err: errors.New("connection refused")}, stubAccounts{}, stubMembers{member: true}),
+			wantUnavailable: true,
+		},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			authorizer := NewDirectTokenAuthorizer[*testUser, *testAccount](testCase.loader, tokens)
+			_, _, _, err := authorizer.Authorize(httptest.NewRecorder(), newBearerRequest("api-key"))
+			if err == nil {
+				t.Fatal("authorize succeeded")
+			}
+			if errors.Is(err, auth.ErrAuthorizationUnavailable) != testCase.wantUnavailable {
+				t.Fatalf("err = %v, unavailable = %v, want %v", err, !testCase.wantUnavailable, testCase.wantUnavailable)
+			}
+		})
+	}
+}
+
+func TestDirectTokenAuthorizerReadsAuthorizationHeaderOnly(t *testing.T) {
+	t.Parallel()
+
+	tokens := stubTokens{tokens: map[string]*directaccesstoken.DirectAccessToken{
+		"api-key": {ID: 1, Token: "api-key", AccountID: 9},
+	}}
+	loader := accauth.NewLoader[*testUser, *testAccount](stubUsers{}, stubAccounts{}, stubMembers{member: true})
+	authorizer := NewDirectTokenAuthorizer[*testUser, *testAccount](loader, tokens)
+
+	requests := map[string]*http.Request{
+		"query parameter": httptest.NewRequest(http.MethodGet, "/graphql?access_token=api-key", nil),
+		"oauth state":     httptest.NewRequest(http.MethodGet, "/auth/facebook/callback?state=access_token%3Dapi-key", nil),
+	}
+	for name, request := range requests {
+		_, userObject, accountObject, err := authorizer.Authorize(httptest.NewRecorder(), request)
+		if err != nil {
+			t.Fatalf("%s: authorize: %v", name, err)
+		}
+		if userObject != nil || accountObject != nil {
+			t.Fatalf("%s: key accepted outside the Authorization header", name)
+		}
+	}
+
+	lowerCaseScheme := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+	lowerCaseScheme.Header.Set("Authorization", "bearer api-key")
+	_, _, accountObject, err := authorizer.Authorize(httptest.NewRecorder(), lowerCaseScheme)
+	if err != nil || accountObject == nil {
+		t.Fatalf("lower-case bearer scheme rejected: account=%v err=%v", accountObject, err)
 	}
 }
 
