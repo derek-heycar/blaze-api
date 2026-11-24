@@ -116,11 +116,11 @@ func (u *Usecase) Revoke(ctx context.Context, opts ...directaccesstoken.QOption)
 }
 
 func scopeFor(ctx context.Context, action string) tokenScope {
-	resourceName := (*models.DirectAccessToken)(nil).RBACResourceName()
+	resource := &models.DirectAccessToken{}
 	switch {
-	case acl.HavePermissions(ctx, resourceName+"."+action+".all"):
+	case acl.HaveObjectPermissions(ctx, resource, action+".all"):
 		return scopeAll
-	case acl.HavePermissions(ctx, resourceName+"."+action+".account"):
+	case acl.HaveObjectPermissions(ctx, resource, action+".account"):
 		return scopeAccount
 	}
 	return scopeOwner
