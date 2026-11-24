@@ -57,10 +57,10 @@ func (stubUsers) Get(_ context.Context, id uint64) (*testUser, error) {
 	return &testUser{UserBase: userModels.UserBase{ID: id}}, nil
 }
 func (stubUsers) FetchList(context.Context, ...user.QOption) ([]*testUser, error) { return nil, nil }
-func (stubUsers) Count(context.Context, ...user.QOption) (int64, error)          { return 0, nil }
-func (stubUsers) Create(context.Context, *testUser) (uint64, error)              { return 0, nil }
-func (stubUsers) Update(context.Context, *testUser) error                        { return nil }
-func (stubUsers) Delete(context.Context, uint64) error                           { return nil }
+func (stubUsers) Count(context.Context, ...user.QOption) (int64, error)           { return 0, nil }
+func (stubUsers) Create(context.Context, *testUser) (uint64, error)               { return 0, nil }
+func (stubUsers) Update(context.Context, *testUser) error                         { return nil }
+func (stubUsers) Delete(context.Context, uint64) error                            { return nil }
 
 type stubAccounts struct {
 	sessionTokenLookups *int

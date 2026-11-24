@@ -8,6 +8,7 @@ import (
 
 	"github.com/geniusrabbit/blaze-api/pkg/auth/tokenextractor"
 	"github.com/geniusrabbit/blaze-api/pkg/context/ctxlogger"
+	"github.com/geniusrabbit/blaze-api/pkg/context/session"
 	"github.com/geniusrabbit/blaze-api/repository/account"
 	accauth "github.com/geniusrabbit/blaze-api/repository/account/auth"
 	"github.com/geniusrabbit/blaze-api/repository/directaccesstoken"
@@ -40,7 +41,7 @@ func NewDirectTokenAuthorizer[TUser user.Model, TAccount account.Model](
 
 // AuthorizerCode returns the identifier code for this authorizer.
 func (au *DirectTokenAuthorizer[TUser, TAccount]) AuthorizerCode() string {
-	return "directtoken"
+	return session.AuthorizerCodeDirectToken
 }
 
 // Authorize looks the bearer token up in the direct access tokens

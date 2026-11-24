@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/geniusrabbit/blaze-api/pkg/context/session"
 	pkgModels "github.com/geniusrabbit/blaze-api/pkg/models"
 	"github.com/geniusrabbit/blaze-api/pkg/permissions"
 	"github.com/geniusrabbit/blaze-api/repository/account"
@@ -154,5 +155,75 @@ func TestMiddlewareAllowsPendingApprovedAndAnonymous(t *testing.T) {
 				t.Fatalf("status = %d, want 204", rec.Code)
 			}
 		})
+	}
+}
+
+type codedAuthorizer struct {
+	fakeAuthorizer
+	code string
+}
+
+func (authorizer codedAuthorizer) AuthorizerCode() string { return authorizer.code }
+
+func TestMiddlewareStoresAuthorizerCode(t *testing.T) {
+	t.Parallel()
+
+	accountObject := &mwAccount{}
+	accountObject.SetID(9)
+	userObject := &mwUser{UserBase: userModels.UserBase{ID: 6, Approve: pkgModels.ApprovedApproveStatus}}
+
+	for _, code := range []string{"jwt", session.AuthorizerCodeDirectToken} {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+
+			storedCode := ""
+			loader := NewLoader[*mwUser, *mwAccount](nil, stubSession{}, stubMembers{})
+			handler := Middleware[*mwUser, *mwAccount](
+				http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+					storedCode = session.AuthorizerCode(request.Context())
+				}),
+				loader,
+				codedAuthorizer{fakeAuthorizer: fakeAuthorizer{user: userObject, acc: accountObject}, code: code},
+			)
+
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request = request.WithContext(permissions.WithManager(request.Context(), permissions.NewTestManager(request.Context())))
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+
+			if storedCode != code {
+				t.Fatalf("stored code = %q, want %q", storedCode, code)
+			}
+		})
+	}
+}
+
+func TestMiddlewareRejectsCrossAccountForDirectToken(t *testing.T) {
+	t.Parallel()
+
+	accountObject := &mwAccount{}
+	accountObject.SetID(9)
+	userObject := &mwUser{UserBase: userModels.UserBase{ID: 6, Approve: pkgModels.ApprovedApproveStatus}}
+
+	nextCalled := false
+	loader := NewLoader[*mwUser, *mwAccount](nil, stubSession{}, stubMembers{})
+	handler := Middleware[*mwUser, *mwAccount](
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
+		loader,
+		codedAuthorizer{
+			fakeAuthorizer: fakeAuthorizer{user: userObject, acc: accountObject},
+			code:           session.AuthorizerCodeDirectToken,
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(session.CrossAuthHeader, session.NewCrossAuthHeader(10, 6))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+	if nextCalled {
+		t.Fatal("next handler was called for a cross-account API key request")
 	}
 }

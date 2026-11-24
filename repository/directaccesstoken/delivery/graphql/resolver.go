@@ -34,6 +34,9 @@ func NewDefaultQueryResolver() *QueryResolver {
 
 // Generate creates a new direct access token with the specified parameters.
 func (r *QueryResolver) Generate(ctx context.Context, userID *uint64, description string, expiresAt *time.Time) (*models.DirectAccessTokenPayload, error) {
+	if err := session.DenyDirectTokenSession(ctx); err != nil {
+		return nil, err
+	}
 	// Initialize expiration time if nil
 	if expiresAt == nil {
 		expiresAt = &time.Time{}
@@ -68,6 +71,9 @@ func (r *QueryResolver) Generate(ctx context.Context, userID *uint64, descriptio
 
 // Revoke revokes direct access tokens matching the provided filter.
 func (r *QueryResolver) Revoke(ctx context.Context, filter models.DirectAccessTokenListFilter) (*models.StatusResponse, error) {
+	if err := session.DenyDirectTokenSession(ctx); err != nil {
+		return nil, err
+	}
 	err := r.uc.Revoke(ctx, FromFilterGraphQL(&filter))
 	if err != nil {
 		return nil, err

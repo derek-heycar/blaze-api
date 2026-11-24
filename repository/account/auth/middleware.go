@@ -23,7 +23,7 @@ func Middleware[TUser userpkg.Model, TAccount account.Model](
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
-		token, user, acc, err := authWrap.Authorize(w, r)
+		authorizerCode, token, user, acc, err := authWrap.AuthorizeWithCode(w, r)
 		if err != nil {
 			ctxlogger.Get(ctx).Error("authorize", zap.Error(err))
 			unauthorized(w)
@@ -39,9 +39,16 @@ func Middleware[TUser userpkg.Model, TAccount account.Model](
 		if any(user) == any(zeroUser) && any(acc) == any(zeroAcc) {
 			ctx = session.WithAnonymousUserAccount(ctx)
 		} else {
+			crossAccountHeader := r.Header.Get(session.CrossAuthHeader)
+			if crossAccountHeader != "" && authorizerCode == session.AuthorizerCodeDirectToken {
+				ctxlogger.Get(ctx).Error("cross account connect is not allowed for API key sessions")
+				unauthorized(w)
+				return
+			}
+
 			// Example:
 			// Header: auth.cross.account = AccountID[:UserID]
-			user, acc, err = loader.CrossAccountConnect(ctx, r.Header.Get(session.CrossAuthHeader), user, acc)
+			user, acc, err = loader.CrossAccountConnect(ctx, crossAccountHeader, user, acc)
 			if err != nil {
 				ctxlogger.Get(ctx).Error("cross account connect", zap.Error(err))
 				unauthorized(w)
@@ -63,6 +70,7 @@ func Middleware[TUser userpkg.Model, TAccount account.Model](
 			}
 
 			ctx = session.WithUserAccount(ctx, user, acc)
+			ctx = session.WithAuthorizerCode(ctx, authorizerCode)
 		}
 
 		next.ServeHTTP(w, r.WithContext(session.WithToken(ctx, token)))
