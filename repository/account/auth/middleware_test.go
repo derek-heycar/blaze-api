@@ -50,7 +50,9 @@ func (f fakeAuthorizer) Authorize(http.ResponseWriter, *http.Request) (string, *
 	return "tok", f.user, f.acc, nil
 }
 
-type stubMembers struct{}
+type stubMembers struct {
+	countError error
+}
 
 func (stubMembers) EmptyObject() *account.Member[*mwUser, *mwAccount] { return nil }
 func (stubMembers) IsAdmin(context.Context, uint64, uint64) bool      { return false }
@@ -58,7 +60,12 @@ func (stubMembers) IsMember(context.Context, uint64, uint64) bool     { return t
 func (stubMembers) FetchListMembers(context.Context, ...account.QOption) ([]*account.Member[*mwUser, *mwAccount], error) {
 	return nil, nil
 }
-func (stubMembers) CountMembers(context.Context, ...account.QOption) (int64, error) { return 0, nil }
+func (stub stubMembers) CountMembers(context.Context, ...account.QOption) (int64, error) {
+	if stub.countError != nil {
+		return 0, stub.countError
+	}
+	return 1, nil
+}
 func (stubMembers) Member(context.Context, uint64, uint64) (*account.Member[*mwUser, *mwAccount], error) {
 	return nil, nil
 }
@@ -271,5 +278,30 @@ func TestMiddlewareStatusForAuthorizerErrors(t *testing.T) {
 				t.Fatal("next handler was called")
 			}
 		})
+	}
+}
+
+func TestMiddlewareAnswersUnavailableWhenMembershipCheckFails(t *testing.T) {
+	t.Parallel()
+
+	accountObject := &mwAccount{}
+	accountObject.SetID(9)
+	userObject := &mwUser{UserBase: userModels.UserBase{ID: 6, Approve: pkgModels.ApprovedApproveStatus}}
+
+	nextCalled := false
+	loader := NewLoader[*mwUser, *mwAccount](nil, stubSession{}, stubMembers{countError: errors.New("replica timeout")})
+	handler := Middleware[*mwUser, *mwAccount](
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
+		loader,
+		fakeAuthorizer{user: userObject, acc: accountObject},
+	)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	if nextCalled {
+		t.Fatal("next handler was called")
 	}
 }

@@ -94,7 +94,8 @@ func (stub stubAccounts) GetByToken(context.Context, string) (*testUser, *testAc
 }
 
 type stubMembers struct {
-	member bool
+	member     bool
+	countError error
 }
 
 func (stubMembers) EmptyObject() *account.Member[*testUser, *testAccount] { return nil }
@@ -103,7 +104,15 @@ func (stub stubMembers) IsMember(context.Context, uint64, uint64) bool    { retu
 func (stubMembers) FetchListMembers(context.Context, ...account.QOption) ([]*account.Member[*testUser, *testAccount], error) {
 	return nil, nil
 }
-func (stubMembers) CountMembers(context.Context, ...account.QOption) (int64, error) { return 0, nil }
+func (stub stubMembers) CountMembers(context.Context, ...account.QOption) (int64, error) {
+	if stub.countError != nil {
+		return 0, stub.countError
+	}
+	if stub.member {
+		return 1, nil
+	}
+	return 0, nil
+}
 func (stubMembers) Member(context.Context, uint64, uint64) (*account.Member[*testUser, *testAccount], error) {
 	return nil, nil
 }
@@ -244,6 +253,10 @@ func TestDirectTokenAuthorizerClassifiesLoaderErrors(t *testing.T) {
 		},
 		"database is down": {
 			loader:          accauth.NewLoader[*testUser, *testAccount](failingUsers{err: errors.New("connection refused")}, stubAccounts{}, stubMembers{member: true}),
+			wantUnavailable: true,
+		},
+		"membership check fails": {
+			loader:          accauth.NewLoader[*testUser, *testAccount](stubUsers{}, stubAccounts{}, stubMembers{member: true, countError: errors.New("replica timeout")}),
 			wantUnavailable: true,
 		},
 	}

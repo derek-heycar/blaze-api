@@ -61,10 +61,18 @@ func Middleware[TUser userpkg.Model, TAccount account.Model](
 			}
 
 			if any(acc) != any(zeroAcc) {
-				if any(user) != any(zeroUser) && !loader.Members.IsMember(ctx, user.GetID(), acc.GetID()) {
-					ctxlogger.Get(ctx).Error("user is not a member of the account")
-					unauthorized(w)
-					return
+				if any(user) != any(zeroUser) {
+					isMember, err := loader.CheckMembership(ctx, user.GetID(), acc.GetID())
+					if err != nil {
+						ctxlogger.Get(ctx).Error("membership check", zap.Error(err))
+						unavailable(w)
+						return
+					}
+					if !isMember {
+						ctxlogger.Get(ctx).Error("user is not a member of the account")
+						unauthorized(w)
+						return
+					}
 				}
 
 				if err = loader.Accounts.LoadPermissions(ctx, acc, user); err != nil {
